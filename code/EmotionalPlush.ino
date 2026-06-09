@@ -1,21 +1,14 @@
 /*
   Emotional Plush Prototype - WAV Audio Version
-
-  Files in this sketch:
-  - EmotionalPlush.ino   -> interaction / behaviour logic
-  - AudioPlayer.h        -> audio player interface
-  - AudioPlayer.cpp      -> WAV playback through MAX98357A + LittleFS
-
-  Required audio files in LittleFS data folder:
-  /wake.wav
-  /sleep.wav
-  /comfort_1.wav
-  /comfort_2.wav
-  /comfort_3.wav
-  /soothe_start.wav
-  /calm_done.wav
-  /meditation_start.wav
-  /meditation_end.wav
+  Updated Logic:
+  - Power on = device starts
+  - 1 head tap = wake / gentle response
+  - Sleep is automatic after no interaction
+  - 1 head tap during comfort seeking = snooze request
+  - 2 head taps = 90-second meditation
+  - Happiness decreases over time, even during sleep
+  - Back FSR = continuous fading soothing
+  - Sound = WAV files in LittleFS through AudioPlayer
 */
 
 #include <Arduino.h>
@@ -23,48 +16,23 @@
 
 // ===================== PINS =====================
 
-// FSR:
-// FSR one side  -> 3V3
-// FSR other side -> GPIO1
 const int FSR_PIN = 1;
-
-// Piezo module:
-// S -> GPIO4
-// + -> 3V3
-// - -> GND
 const int PIEZO_PIN = 4;
-
-// Vibration motor module:
-// IN -> GPIO5
-// VCC -> 3V3 or 5V/VIN
-// GND -> GND
 const int MOTOR_PIN = 5;
 
-// MAX98357A:
-// DIN  -> GPIO18
-// BCLK -> GPIO17
-// LRC  -> GPIO16
-// VIN  -> 3V3
-// GND  -> GND
-// SD   -> 3V3
 const int I2S_DOUT = 18;
 const int I2S_BCLK = 17;
 const int I2S_LRC  = 16;
 
-// Audio player object.
-// This class handles LittleFS mounting and WAV playback.
 AudioPlayer audio(I2S_DOUT, I2S_BCLK, I2S_LRC);
 
 // ===================== BASIC SETTINGS =====================
 
-// If motor does not vibrate, change true to false.
 const bool MOTOR_ACTIVE_HIGH = true;
-
-// If head tap does not work, change true to false.
 const bool PIEZO_ACTIVE_HIGH = true;
 
-// You currently use FSR without external resistor.
-// After adding 10k resistor, change this to false.
+// 现在没有 10k 电阻就保持 true。
+// 加了 10k 电阻后改成 false。
 const bool FSR_NO_EXTERNAL_RESISTOR = true;
 
 // ===================== FSR SETTINGS =====================
@@ -88,15 +56,21 @@ int happiness = 75;
 const int HAPPINESS_MAX = 100;
 const int HAPPINESS_MIN = 0;
 
-// Complete soothing or meditation restores +30, not full recovery.
 const int HAPPINESS_RECOVERY_AMOUNT = 30;
-
-// Wake-up gives a small bonus only.
 const int WAKE_HAPPINESS_BONUS = 3;
 
-// Happiness decreases even during sleep.
+// happy 会一直随时间下降，包括 sleep 状态
 const unsigned long HAPPINESS_DECAY_INTERVAL = 60000;
 const int HAPPINESS_DECAY_AMOUNT = 2;
+
+// ===================== AUTO SLEEP / SNOOZE SETTINGS =====================
+
+// AWAKE 状态下 90 秒无互动，自动休眠
+const unsigned long AUTO_SLEEP_AFTER_MS = 90000;
+
+// 寻求安慰时，单拍头顶可以暂停主动打扰 5 分钟
+const unsigned long SNOOZE_DURATION_MS = 300000;
+unsigned long snoozeUntil = 0;
 
 // ===================== COMFORT LEVEL SETTINGS =====================
 
@@ -181,8 +155,6 @@ const int MEDITATION_MAX_POWER = 230;
 int lastMeditationCycle = -1;
 
 // ===================== SOUND WRAPPERS =====================
-// These names keep the behaviour code readable.
-// Audio implementation is separated in AudioPlayer.cpp.
 
 void soundWake() {
   audio.play("/wake.wav");
@@ -502,19 +474,25 @@ void handleHeadTapLogic() {
         addHappiness(WAKE_HAPPINESS_BONUS);
 
       } else if (currentMode == MODE_AWAKE || currentMode == MODE_CALM) {
-        Serial.println("Single head tap: go to sleep");
+        Serial.println("Single head tap: gentle response, stay awake");
 
-        setMode(MODE_SLEEP);
-        sleepFeedback();
-        soundSleep();
+        // 老师建议后：单拍不再手动睡眠，只作为轻回应
+        wakeFeedback();
+        soundWake();
 
       } else if (currentMode == MODE_SEEKING_COMFORT) {
-        Serial.println("Single head tap: temporarily acknowledge and sleep");
+        Serial.println("Single head tap: snooze comfort request");
 
+        // 用户确认了玩偶的需求，但暂时不回应
         stopSeekingVibration();
-        setMode(MODE_SLEEP);
+        snoozeUntil = now + SNOOZE_DURATION_MS;
+
+        setMode(MODE_AWAKE);
+
         sleepFeedback();
         soundSleep();
+
+        Serial.println("Comfort request snoozed for 5 minutes.");
 
       } else if (currentMode == MODE_BEING_SOOTHED) {
         Serial.println("Single head tap ignored during soothing.");
@@ -575,6 +553,11 @@ void updateHappiness() {
     int comfortLevel = getComfortLevel();
 
     if (comfortLevel > 0 && currentMode != MODE_SEEKING_COMFORT) {
+      if (now < snoozeUntil) {
+        Serial.println("Comfort request is snoozed. Not seeking comfort now.");
+        return;
+      }
+
       Serial.print("Happiness low. Plush wakes up and seeks comfort. Level: ");
       Serial.println(comfortLevel);
 
@@ -654,6 +637,16 @@ void updateSleepMode() {
 
 void updateAwakeMode() {
   motorOff();
+
+  unsigned long now = millis();
+
+  if (now - lastInteractionTime > AUTO_SLEEP_AFTER_MS) {
+    Serial.println("No interaction: auto sleep.");
+
+    setMode(MODE_SLEEP);
+    sleepFeedback();
+    soundSleep();
+  }
 }
 
 void updateSeekingComfortMode() {
@@ -664,6 +657,7 @@ void updateSeekingComfortMode() {
   if (comfortLevel == 0) {
     Serial.println("Happiness is enough. Stop seeking comfort.");
     stopSeekingVibration();
+    lastInteractionTime = now;
     setMode(MODE_AWAKE);
     return;
   }
@@ -706,6 +700,7 @@ void updateCalmMode() {
   unsigned long now = millis();
 
   if (now - modeStartTime > 15000) {
+    lastInteractionTime = now;
     setMode(MODE_AWAKE);
   }
 }
@@ -828,7 +823,9 @@ void setup() {
   Serial.println();
   Serial.println("=====================================");
   Serial.println("Emotional Plush Prototype - WAV Audio Version");
-  Serial.println("1 head tap = sleep / wake toggle");
+  Serial.println("1 head tap = wake / gentle response");
+  Serial.println("Auto sleep after no interaction");
+  Serial.println("1 head tap during seeking comfort = snooze");
   Serial.println("2 head taps = 90s meditation");
   Serial.println("Back FSR = continuous fading soothing");
   Serial.println("Sound = WAV files in LittleFS");
