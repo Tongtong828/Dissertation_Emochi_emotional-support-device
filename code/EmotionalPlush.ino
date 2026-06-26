@@ -1,20 +1,7 @@
-/*
-  Emotional Plush Prototype - WAV Audio Version
-  Updated Logic:
-  - Power on = device starts
-  - 1 head tap = wake / gentle response
-  - Sleep is automatic after no interaction
-  - 1 head tap during comfort seeking = snooze request
-  - 2 head taps = 90-second meditation
-  - Happiness decreases over time, even during sleep
-  - Back FSR = continuous fading soothing
-  - Sound = WAV files in LittleFS through AudioPlayer
-*/
-
 #include <Arduino.h>
 #include "AudioPlayer.h"
 
-// ===================== PINS =====================
+// PINS 
 
 const int FSR_PIN = 1;
 const int PIEZO_PIN = 4;
@@ -26,30 +13,28 @@ const int I2S_LRC  = 16;
 
 AudioPlayer audio(I2S_DOUT, I2S_BCLK, I2S_LRC);
 
-// ===================== BASIC SETTINGS =====================
+// BASIC SETTINGS 
 
 const bool MOTOR_ACTIVE_HIGH = true;
 const bool PIEZO_ACTIVE_HIGH = true;
 
-// 现在没有 10k 电阻就保持 true。
-// 加了 10k 电阻后改成 false。
 const bool FSR_NO_EXTERNAL_RESISTOR = true;
 
-// ===================== FSR SETTINGS =====================
+// FSR SETTINGS 
 
-const int FSR_TOUCH_THRESHOLD = 250;
-const int FSR_RELEASE_THRESHOLD = 120;
+const int FSR_TOUCH_THRESHOLD = 650;
+const int FSR_RELEASE_THRESHOLD = 250;
 
-// ===================== TAP SETTINGS =====================
+// TAP SETTINGS 
 
 bool lastPiezoState = false;
 unsigned long lastTapTime = 0;
 int tapCount = 0;
 
-const unsigned long TAP_DEBOUNCE_MS = 150;
-const unsigned long TAP_SEQUENCE_GAP_MS = 500;
+const unsigned long TAP_DEBOUNCE_MS = 70;      // easier to catch two continuous taps
+const unsigned long TAP_SEQUENCE_GAP_MS = 900; // longer window for double tap
 
-// ===================== HAPPINESS SETTINGS =====================
+// HAPPINESS SETTINGS 
 
 int happiness = 75;
 
@@ -59,20 +44,20 @@ const int HAPPINESS_MIN = 0;
 const int HAPPINESS_RECOVERY_AMOUNT = 30;
 const int WAKE_HAPPINESS_BONUS = 3;
 
-// happy 会一直随时间下降，包括 sleep 状态
+// happy will keep decreasing over time, including during sleep
 const unsigned long HAPPINESS_DECAY_INTERVAL = 60000;
 const int HAPPINESS_DECAY_AMOUNT = 2;
 
-// ===================== AUTO SLEEP / SNOOZE SETTINGS =====================
+// AUTO SLEEP / SNOOZE SETTINGS 
 
-// AWAKE 状态下 90 秒无互动，自动休眠
+// In the AWAKE state, there is no interaction for 90 seconds and it automatically goes into sleep mode
 const unsigned long AUTO_SLEEP_AFTER_MS = 90000;
 
-// 寻求安慰时，单拍头顶可以暂停主动打扰 5 分钟
+// seeking comfort, simply patting the top of your head can pause the initiative to disturb for five minutes
 const unsigned long SNOOZE_DURATION_MS = 300000;
 unsigned long snoozeUntil = 0;
 
-// ===================== COMFORT LEVEL SETTINGS =====================
+// COMFORT LEVEL SETTINGS
 
 const int COMFORT_LEVEL_1_THRESHOLD = 60;
 const int COMFORT_LEVEL_2_THRESHOLD = 45;
@@ -86,9 +71,9 @@ const unsigned long SEEK_DURATION_LEVEL_1 = 2500;
 const unsigned long SEEK_DURATION_LEVEL_2 = 4000;
 const unsigned long SEEK_DURATION_LEVEL_3 = 6000;
 
-const int SEEK_POWER_LEVEL_1 = 90;
-const int SEEK_POWER_LEVEL_2 = 150;
-const int SEEK_POWER_LEVEL_3 = 220;
+const int SEEK_POWER_LEVEL_1 = 255;
+const int SEEK_POWER_LEVEL_2 = 255;
+const int SEEK_POWER_LEVEL_3 = 255;
 
 unsigned long lastHappinessDecayTime = 0;
 unsigned long lastSeekVibrationTime = 0;
@@ -98,7 +83,7 @@ unsigned long seekingVibrationStartTime = 0;
 unsigned long seekingVibrationDuration = 0;
 int seekingVibrationPower = 0;
 
-// ===================== SOOTHING SETTINGS =====================
+// SOOTHING SETTINGS 
 
 int sootheCount = 0;
 int sootheTarget = 6;
@@ -112,10 +97,10 @@ const unsigned long SOOTHE_DEBOUNCE_MS = 350;
 
 const unsigned long SOOTHE_TIMEOUT_MS = 15000;
 
-const int SOOTHE_START_POWER = 230;
-const int SOOTHE_END_POWER = 35;
+const int SOOTHE_START_POWER = 255;
+const int SOOTHE_END_POWER = 120;
 
-// ===================== MODES =====================
+// MODES 
 
 enum DeviceMode {
   MODE_SLEEP,
@@ -132,29 +117,28 @@ unsigned long modeStartTime = 0;
 unsigned long lastInteractionTime = 0;
 unsigned long lastPrintTime = 0;
 
-// ===================== SENSOR VALUES =====================
+// SENSOR VALUES 
 
 int rawFSR = 0;
 float smoothFSR = 0;
 
-// ===================== MEDITATION SETTINGS =====================
+//  MEDITATION SETTINGS
 
 const unsigned long MEDITATION_TOTAL_MS = 90000;
 
-const unsigned long INHALE_MS = 7000;
+const unsigned long INHALE_MS = 5000;
 const unsigned long PAUSE_AFTER_INHALE_MS = 500;
-const unsigned long EXHALE_MS = 7000;
+const unsigned long EXHALE_MS = 5000;
 const unsigned long PAUSE_AFTER_EXHALE_MS = 500;
 
 const unsigned long MEDITATION_CYCLE_MS =
   INHALE_MS + PAUSE_AFTER_INHALE_MS + EXHALE_MS + PAUSE_AFTER_EXHALE_MS;
 
-const int MEDITATION_MIN_POWER = 65;
-const int MEDITATION_MAX_POWER = 230;
-
+const int MEDITATION_MIN_POWER = 120;
+const int MEDITATION_MAX_POWER = 255;
 int lastMeditationCycle = -1;
 
-// ===================== SOUND WRAPPERS =====================
+// SOUND WRAPPERS 
 
 void soundWake() {
   audio.play("/wake.wav");
@@ -192,7 +176,7 @@ void soundMeditationEnd() {
   audio.play("/meditation_end.wav");
 }
 
-// ===================== MOTOR FUNCTIONS =====================
+// MOTOR FUNCTIONS 
 
 void motorWrite(int power) {
   power = constrain(power, 0, 255);
@@ -223,26 +207,38 @@ void motorPulse(int durationMs) {
 }
 
 void wakeFeedback() {
-  motorPulse(120);
-  delay(100);
-  motorPulse(80);
+  motorWrite(255);
+  delay(220);
+  motorOff();
+  delay(120);
+  motorWrite(255);
+  delay(180);
+  motorOff();
 }
 
 void sleepFeedback() {
-  motorPulse(80);
+  motorWrite(255);
+  delay(180);
+  motorOff();
 }
 
 void meditationStartFeedback() {
-  motorPulse(150);
+  motorWrite(255);
+  delay(260);
+  motorOff();
   delay(180);
-  motorPulse(150);
+  motorWrite(255);
+  delay(260);
   motorOff();
 }
 
 void meditationEndFeedback() {
-  motorPulse(120);
+  motorWrite(255);
+  delay(220);
+  motorOff();
   delay(180);
-  motorPulse(120);
+  motorWrite(255);
+  delay(220);
   motorOff();
 }
 
@@ -258,7 +254,7 @@ void addHappiness(int amount) {
   Serial.println(happiness);
 }
 
-// ===================== COMFORT LEVEL HELPERS =====================
+// COMFORT LEVEL HELPERS 
 
 int getComfortLevel() {
   if (happiness < COMFORT_LEVEL_3_THRESHOLD) {
@@ -343,7 +339,7 @@ void updateSeekingVibration() {
   }
 }
 
-// ===================== SOOTHING VIBRATION HELPERS =====================
+// SOOTHING VIBRATION HELPERS 
 
 int getContinuousSoothePower() {
   if (sootheTarget <= 1) {
@@ -368,7 +364,7 @@ void updateContinuousSoothingVibration() {
   motorWrite(power);
 }
 
-// ===================== MODE FUNCTION =====================
+//  MODE FUNCTION 
 
 void setMode(DeviceMode newMode) {
   currentMode = newMode;
@@ -408,7 +404,7 @@ void setMode(DeviceMode newMode) {
   }
 }
 
-// ===================== SENSOR READING =====================
+//  SENSOR READING
 
 int readFSR() {
   if (FSR_NO_EXTERNAL_RESISTOR) {
@@ -447,7 +443,7 @@ void readPiezoTap() {
   lastPiezoState = currentState;
 }
 
-// ===================== HEAD TAP LOGIC =====================
+//  HEAD TAP LOGIC 
 
 void handleHeadTapLogic() {
   readPiezoTap();
@@ -476,14 +472,13 @@ void handleHeadTapLogic() {
       } else if (currentMode == MODE_AWAKE || currentMode == MODE_CALM) {
         Serial.println("Single head tap: gentle response, stay awake");
 
-        // 老师建议后：单拍不再手动睡眠，只作为轻回应
         wakeFeedback();
         soundWake();
 
       } else if (currentMode == MODE_SEEKING_COMFORT) {
         Serial.println("Single head tap: snooze comfort request");
 
-        // 用户确认了玩偶的需求，但暂时不回应
+        // not responded for the time being
         stopSeekingVibration();
         snoozeUntil = now + SNOOZE_DURATION_MS;
 
@@ -526,7 +521,7 @@ void handleHeadTapLogic() {
   }
 }
 
-// ===================== HAPPINESS LOGIC =====================
+//  HAPPINESS LOGIC
 
 void updateHappiness() {
   // Happiness still decreases in sleep.
@@ -566,7 +561,7 @@ void updateHappiness() {
   }
 }
 
-// ===================== BACK FSR SOOTHING LOGIC =====================
+//  BACK FSR SOOTHING LOGIC 
 
 void resetSoothingSession() {
   sootheCount = 0;
@@ -582,54 +577,63 @@ void handleBackSoothing() {
   bool backTouched = smoothFSR >= FSR_TOUCH_THRESHOLD;
   bool backReleased = smoothFSR <= FSR_RELEASE_THRESHOLD;
 
-  if (backTouched && !backWasTouched) {
-    if (now - lastSootheTime > SOOTHE_DEBOUNCE_MS) {
-      lastSootheTime = now;
-      lastInteractionTime = now;
-
-      if (
-        currentMode == MODE_SEEKING_COMFORT ||
-        currentMode == MODE_AWAKE ||
-        currentMode == MODE_BEING_SOOTHED
-      ) {
-        if (currentMode != MODE_BEING_SOOTHED) {
-          resetSoothingSession();
-
-          stopSeekingVibration();
-
-          setMode(MODE_BEING_SOOTHED);
-          soundSootheStart();
-        }
-
-        sootheCount++;
-
-        Serial.print("Back soothing stroke: ");
-        Serial.print(sootheCount);
-        Serial.print("/");
-        Serial.println(sootheTarget);
-
-        if (sootheCount >= sootheTarget) {
-          Serial.println("Soothing completed. Plush is calmer.");
-
-          motorOff();
-
-          addHappiness(HAPPINESS_RECOVERY_AMOUNT);
-
-          soundCalmDone();
-          setMode(MODE_CALM);
-        }
-      }
-    }
-  }
+  // Detect the rising edge before updating backWasTouched.
+  // This prevents random FSR noise in AWAKE mode from starting a soothing session.
+  bool newBackTouch = backTouched && !backWasTouched;
 
   if (backReleased) {
     backWasTouched = false;
   } else if (backTouched) {
     backWasTouched = true;
   }
+
+  // Important fix:
+  // FSR can only start/count soothing when the plush is already seeking comfort
+  // or already being soothed.
+  // When happiness is high and mode is AWAKE, touching the back will NOT trigger soothing.
+  if (
+    currentMode != MODE_SEEKING_COMFORT &&
+    currentMode != MODE_BEING_SOOTHED
+  ) {
+    return;
+  }
+
+  if (newBackTouch) {
+    if (now - lastSootheTime > SOOTHE_DEBOUNCE_MS) {
+      lastSootheTime = now;
+      lastInteractionTime = now;
+
+      if (currentMode != MODE_BEING_SOOTHED) {
+        resetSoothingSession();
+
+        stopSeekingVibration();
+
+        setMode(MODE_BEING_SOOTHED);
+        soundSootheStart();
+      }
+
+      sootheCount++;
+
+      Serial.print("Back soothing stroke: ");
+      Serial.print(sootheCount);
+      Serial.print("/");
+      Serial.println(sootheTarget);
+
+      if (sootheCount >= sootheTarget) {
+        Serial.println("Soothing completed. Plush is calmer.");
+
+        motorOff();
+
+        addHappiness(HAPPINESS_RECOVERY_AMOUNT);
+
+        soundCalmDone();
+        setMode(MODE_CALM);
+      }
+    }
+  }
 }
 
-// ===================== MODE UPDATES =====================
+//  MODE UPDATES 
 
 void updateSleepMode() {
   motorOff();
@@ -705,7 +709,7 @@ void updateCalmMode() {
   }
 }
 
-// ===================== MEDITATION LOGIC =====================
+//  MEDITATION LOGIC 
 
 void updateMeditationMode() {
   unsigned long now = millis();
@@ -732,42 +736,29 @@ void updateMeditationMode() {
   if (currentCycle != lastMeditationCycle) {
     lastMeditationCycle = currentCycle;
 
-    Serial.print("Meditation cycle ");
+    Serial.print("Meditation breathing cycle ");
     Serial.print(currentCycle + 1);
-    Serial.println(" started.");
+    Serial.println(" started: inhale weak->strong, exhale strong->weak.");
   }
 
-  unsigned long inhaleStart = 0;
-  unsigned long inhaleEnd = inhaleStart + INHALE_MS;
-
-  unsigned long pauseAfterInhaleStart = inhaleEnd;
-  unsigned long pauseAfterInhaleEnd = pauseAfterInhaleStart + PAUSE_AFTER_INHALE_MS;
-
-  unsigned long exhaleStart = pauseAfterInhaleEnd;
-  unsigned long exhaleEnd = exhaleStart + EXHALE_MS;
-
-  unsigned long pauseAfterExhaleStart = exhaleEnd;
-  unsigned long pauseAfterExhaleEnd = pauseAfterExhaleStart + PAUSE_AFTER_EXHALE_MS;
-
-  if (cycleTime >= inhaleStart && cycleTime < inhaleEnd) {
-    float progress = (float)(cycleTime - inhaleStart) / (float)INHALE_MS;
+  if (cycleTime < INHALE_MS) {
+    float progress = (float)cycleTime / (float)INHALE_MS;
     progress = constrain(progress, 0.0, 1.0);
 
-    int power = MEDITATION_MIN_POWER + (int)(progress * (MEDITATION_MAX_POWER - MEDITATION_MIN_POWER));
+    int power = MEDITATION_MIN_POWER +
+      (int)(progress * (MEDITATION_MAX_POWER - MEDITATION_MIN_POWER));
+
     motorWrite(power);
 
-  } else if (cycleTime >= pauseAfterInhaleStart && cycleTime < pauseAfterInhaleEnd) {
-    motorOff();
-
-  } else if (cycleTime >= exhaleStart && cycleTime < exhaleEnd) {
-    float progress = (float)(cycleTime - exhaleStart) / (float)EXHALE_MS;
+  } else if (cycleTime < INHALE_MS + EXHALE_MS) {
+    unsigned long exhaleTime = cycleTime - INHALE_MS;
+    float progress = (float)exhaleTime / (float)EXHALE_MS;
     progress = constrain(progress, 0.0, 1.0);
 
-    int power = MEDITATION_MAX_POWER - (int)(progress * (MEDITATION_MAX_POWER - MEDITATION_MIN_POWER));
-    motorWrite(power);
+    int power = MEDITATION_MAX_POWER -
+      (int)(progress * (MEDITATION_MAX_POWER - MEDITATION_MIN_POWER));
 
-  } else if (cycleTime >= pauseAfterExhaleStart && cycleTime < pauseAfterExhaleEnd) {
-    motorOff();
+    motorWrite(power);
 
   } else {
     motorOff();
@@ -814,7 +805,7 @@ void printDebug() {
   }
 }
 
-// ===================== SETUP / LOOP =====================
+//  SETUP / LOOP 
 
 void setup() {
   Serial.begin(115200);
@@ -827,7 +818,7 @@ void setup() {
   Serial.println("Auto sleep after no interaction");
   Serial.println("1 head tap during seeking comfort = snooze");
   Serial.println("2 head taps = 90s meditation");
-  Serial.println("Back FSR = continuous fading soothing");
+  Serial.println("Back FSR = soothing only after seeking comfort");
   Serial.println("Sound = WAV files in LittleFS");
   Serial.println("=====================================");
 
