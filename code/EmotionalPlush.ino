@@ -22,8 +22,8 @@ const bool FSR_NO_EXTERNAL_RESISTOR = true;
 
 // FSR SETTINGS 
 
-const int FSR_TOUCH_THRESHOLD = 650;
-const int FSR_RELEASE_THRESHOLD = 250;
+const int FSR_TOUCH_THRESHOLD = 150;
+const int FSR_RELEASE_THRESHOLD = 70;
 
 // TAP SETTINGS 
 
@@ -31,18 +31,18 @@ bool lastPiezoState = false;
 unsigned long lastTapTime = 0;
 int tapCount = 0;
 
-const unsigned long TAP_DEBOUNCE_MS = 70;      // easier to catch two continuous taps
-const unsigned long TAP_SEQUENCE_GAP_MS = 900; // longer window for double tap
+const unsigned long TAP_DEBOUNCE_MS = 40;      // easier to catch two continuous taps
+const unsigned long TAP_SEQUENCE_GAP_MS = 1200; // longer window for double tap
 
 // HAPPINESS SETTINGS 
 
-int happiness = 75;
+int happiness = 65;
 
 const int HAPPINESS_MAX = 100;
 const int HAPPINESS_MIN = 0;
 
 const int HAPPINESS_RECOVERY_AMOUNT = 30;
-const int WAKE_HAPPINESS_BONUS = 3;
+const int WAKE_HAPPINESS_BONUS = 3;······1`
 
 // happy will keep decreasing over time, including during sleep
 const unsigned long HAPPINESS_DECAY_INTERVAL = 60000;
@@ -219,6 +219,12 @@ void wakeFeedback() {
 void sleepFeedback() {
   motorWrite(255);
   delay(180);
+  motorOff();
+}
+
+void sootheStrokeFeedback() {
+  motorWrite(255);
+  delay(120);
   motorOff();
 }
 
@@ -448,6 +454,14 @@ void readPiezoTap() {
 void handleHeadTapLogic() {
   readPiezoTap();
 
+  if (currentMode == MODE_MEDITATION) {
+    if (tapCount > 0) {
+      tapCount = 0;
+      Serial.println("Head tap ignored during meditation.");
+    }
+    return;
+  }
+
   if (tapCount == 0) {
     return;
   }
@@ -470,10 +484,7 @@ void handleHeadTapLogic() {
         addHappiness(WAKE_HAPPINESS_BONUS);
 
       } else if (currentMode == MODE_AWAKE || currentMode == MODE_CALM) {
-        Serial.println("Single head tap: gentle response, stay awake");
-
-        wakeFeedback();
-        soundWake();
+        Serial.println("Single head tap: already awake, no wake behavior.");
 
       } else if (currentMode == MODE_SEEKING_COMFORT) {
         Serial.println("Single head tap: snooze comfort request");
@@ -491,9 +502,6 @@ void handleHeadTapLogic() {
 
       } else if (currentMode == MODE_BEING_SOOTHED) {
         Serial.println("Single head tap ignored during soothing.");
-
-      } else if (currentMode == MODE_MEDITATION) {
-        Serial.println("Single head tap ignored during meditation.");
       }
 
     } else if (finalTapCount == 2) {
@@ -619,6 +627,8 @@ void handleBackSoothing() {
       Serial.print("/");
       Serial.println(sootheTarget);
 
+      sootheStrokeFeedback();
+
       if (sootheCount >= sootheTarget) {
         Serial.println("Soothing completed. Plush is calmer.");
 
@@ -695,7 +705,7 @@ void updateBeingSoothedMode() {
     return;
   }
 
-  updateContinuousSoothingVibration();
+  motorOff();
 }
 
 void updateCalmMode() {
@@ -741,7 +751,11 @@ void updateMeditationMode() {
     Serial.println(" started: inhale weak->strong, exhale strong->weak.");
   }
 
-  if (cycleTime < INHALE_MS) {
+  unsigned long inhaleEnd = INHALE_MS;
+  unsigned long pauseAfterInhaleEnd = inhaleEnd + PAUSE_AFTER_INHALE_MS;
+  unsigned long exhaleEnd = pauseAfterInhaleEnd + EXHALE_MS;
+
+  if (cycleTime < inhaleEnd) {
     float progress = (float)cycleTime / (float)INHALE_MS;
     progress = constrain(progress, 0.0, 1.0);
 
@@ -750,8 +764,11 @@ void updateMeditationMode() {
 
     motorWrite(power);
 
-  } else if (cycleTime < INHALE_MS + EXHALE_MS) {
-    unsigned long exhaleTime = cycleTime - INHALE_MS;
+  } else if (cycleTime < pauseAfterInhaleEnd) {
+    motorOff();
+
+  } else if (cycleTime < exhaleEnd) {
+    unsigned long exhaleTime = cycleTime - pauseAfterInhaleEnd;
     float progress = (float)exhaleTime / (float)EXHALE_MS;
     progress = constrain(progress, 0.0, 1.0);
 
