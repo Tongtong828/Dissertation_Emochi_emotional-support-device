@@ -42,7 +42,7 @@ const int HAPPINESS_MAX = 100;
 const int HAPPINESS_MIN = 0;
 
 const int HAPPINESS_RECOVERY_AMOUNT = 30;
-const int WAKE_HAPPINESS_BONUS = 3;······1`
+const int WAKE_HAPPINESS_BONUS = 3;
 
 // happy will keep decreasing over time, including during sleep
 const unsigned long HAPPINESS_DECAY_INTERVAL = 60000;
@@ -62,6 +62,8 @@ unsigned long snoozeUntil = 0;
 const int COMFORT_LEVEL_1_THRESHOLD = 60;
 const int COMFORT_LEVEL_2_THRESHOLD = 45;
 const int COMFORT_LEVEL_3_THRESHOLD = 25;
+
+const unsigned long SEEKING_SELF_RECOVER_MS = 60000;
 
 const unsigned long SEEK_INTERVAL_LEVEL_1 = 60000;
 const unsigned long SEEK_INTERVAL_LEVEL_2 = 30000;
@@ -673,6 +675,24 @@ void updateSeekingComfortMode() {
     stopSeekingVibration();
     lastInteractionTime = now;
     setMode(MODE_AWAKE);
+    return;
+  }
+
+  if (now - modeStartTime >= SEEKING_SELF_RECOVER_MS) {
+    Serial.println("No soothing received for 1 minute. Self-recovering.");
+
+    stopSeekingVibration();
+
+    happiness = HAPPINESS_MAX;
+    sootheCount = 0;
+    snoozeUntil = 0;
+    lastHappinessDecayTime = now;
+    lastInteractionTime = now;
+
+    Serial.print("Happiness self-recovered to: ");
+    Serial.println(happiness);
+
+    setMode(MODE_CALM);
     return;
   }
 
